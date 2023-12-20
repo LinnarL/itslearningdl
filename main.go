@@ -79,7 +79,7 @@ func main() {
 			return "Downloading files"
 		})
 		for _, resource := range resouceList {
-			logger.Info("Downloading element", "element", resource.Title, "id", resource.ElementID)
+			logger.Info("Downloading element", "course", course.Title, "element", resource.Title, "id", resource.ElementID)
 			wg.Add(1)
 			current_tasks++
 			go func(resource itslearning.Resource) {
@@ -100,7 +100,6 @@ func main() {
 
 		bar_course.Incr()
 	}
-
 }
 
 func fetchResourcesRecursive(itsl itslearning.Itslearning, course itslearning.Course, folder_resource int, resList *[]itslearning.Resource) {
