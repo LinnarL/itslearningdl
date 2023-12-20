@@ -17,7 +17,7 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-type itslearning struct {
+type Itslearning struct {
 	instance     string
 	user_agent   string
 	access_token string
@@ -55,7 +55,7 @@ type Resource struct {
 	LearningObjectInstanceID int    `json:"LearningObjectInstanceId"`
 }
 
-func doHTTPReq(req http.Request, err error, itsl itslearning, method string, target interface{}) error {
+func doHTTPReq(req http.Request, err error, itsl Itslearning, method string, target interface{}) error {
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", itsl.user_agent)
 	if err != nil {
@@ -73,7 +73,7 @@ func doHTTPReq(req http.Request, err error, itsl itslearning, method string, tar
 	return json.NewDecoder(res.Body).Decode(target)
 }
 
-func RequestAuthtoken(itsl itslearning, username string, password string) string {
+func RequestAuthtoken(itsl Itslearning, username string, password string) string {
 	path := itsl.instance + "/restapi/oauth2/token"
 	payload := url.Values{
 		"client_id":  {"10ae9d30-1853-48ff-81cb-47b58a325685"},
@@ -88,7 +88,7 @@ func RequestAuthtoken(itsl itslearning, username string, password string) string
 	return (*data)["access_token"].(string)
 }
 
-func QueryCourseList(itsl itslearning) []Course {
+func QueryCourseList(itsl Itslearning) []Course {
 	path := itsl.instance + "/restapi/personal/courses/v2"
 	payload := url.Values{
 		"access_token": {itsl.access_token},
@@ -103,7 +103,7 @@ func QueryCourseList(itsl itslearning) []Course {
 	return data.EntityArray
 }
 
-func QueryCourseResources(itsl itslearning, courseID int) []Resource {
+func QueryCourseResources(itsl Itslearning, courseID int) []Resource {
 	path := fmt.Sprintf("%s/restapi/personal/courses/%s/resources/v1", itsl.instance, strconv.Itoa(courseID))
 	payload := url.Values{
 		"access_token": {itsl.access_token},
@@ -121,7 +121,7 @@ func QueryCourseResources(itsl itslearning, courseID int) []Resource {
 	return data.Resources.EntityArray
 }
 
-func QueryFolderResources(itsl itslearning, courseID int, folderElementID int) []Resource {
+func QueryFolderResources(itsl Itslearning, courseID int, folderElementID int) []Resource {
 	path := fmt.Sprintf("%s/restapi/personal/courses/%s/folders/%s/resources/v1", itsl.instance, strconv.Itoa(courseID), strconv.Itoa(folderElementID))
 	payload := url.Values{
 		"access_token": {itsl.access_token},
@@ -139,7 +139,7 @@ func QueryFolderResources(itsl itslearning, courseID int, folderElementID int) [
 	return data.Resources.EntityArray
 }
 
-func DownloadElement(itsl itslearning, elementID int, outfile string) {
+func DownloadElement(itsl Itslearning, elementID int, outfile string) {
 	// Request the SSO redirect URL
 	path := fmt.Sprintf("%s/restapi/personal/sso/url/v1", itsl.instance)
 	payload := url.Values{
@@ -222,9 +222,9 @@ func DownloadElement(itsl itslearning, elementID int, outfile string) {
 	io.Copy(out, res.Body)
 }
 
-func New(username string, password string, instance string, useragent string) itslearning {
+func New(username string, password string, instance string, useragent string) Itslearning {
 	log.Debug("Attempting to log in")
-	e := itslearning{instance, useragent, ""}
+	e := Itslearning{instance, useragent, ""}
 	e.access_token = RequestAuthtoken(e, username, password)
 	return e
 }
