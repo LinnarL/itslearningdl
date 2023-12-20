@@ -84,8 +84,8 @@ func main() {
 			current_tasks++
 			go func(resource itslearning.Resource) {
 				defer wg.Done()
-				bar.Incr()
 				itslearning.DownloadElement(itsl, resource.ElementID, "./out/"+course.Title+"/"+resource.Title)
+				bar.Incr()
 				current_tasks--
 			}(resource)
 
