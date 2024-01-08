@@ -79,12 +79,17 @@ func main() {
 			return "Downloading files"
 		})
 		for _, resource := range resouceList {
+			var out_path = "./out/" + course.Title + "/" + resource.Title
+			if _, err := os.Stat(out_path); err == nil {
+				logger.Info("Skipping element", "course", course.Title, "element", resource.Title, "id", resource.ElementID)
+				continue
+			}
 			logger.Info("Downloading element", "course", course.Title, "element", resource.Title, "id", resource.ElementID)
 			wg.Add(1)
 			current_tasks++
 			go func(resource itslearning.Resource) {
 				defer wg.Done()
-				itslearning.DownloadElement(itsl, resource.ElementID, "./out/"+course.Title+"/"+resource.Title)
+				itslearning.DownloadElement(itsl, resource.ElementID, out_path)
 				bar.Incr()
 				current_tasks--
 			}(resource)
