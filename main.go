@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"minie4/itslearningdl/itslearning"
 	"os"
+	"regexp"
 	"sync"
 
 	"github.com/charmbracelet/log"
@@ -79,7 +80,7 @@ func main() {
 			return "Downloading files"
 		})
 		for _, resource := range resouceList {
-			var out_path = "./out/" + course.Title + "/" + resource.Title
+			var out_path = "./out" + sanitizePath(resource.Path) + "/" + resource.Title
 			if _, err := os.Stat(out_path); err == nil {
 				logger.Info("Skipping element", "course", course.Title, "element", resource.Title, "id", resource.ElementID)
 				continue
@@ -120,6 +121,11 @@ func fetchResourcesRecursive(itsl itslearning.Itslearning, course itslearning.Co
 			logger.Info("Found element", "element", resource.Title, "id", resource.ElementID)
 		}
 	}
+}
+
+func sanitizePath(path string) string {
+	var regex = regexp.MustCompile(`\s*?/\s*`)
+	return regex.ReplaceAllString(path, "/")
 }
 
 func appendProgress(b *uiprogress.Bar) string {
