@@ -14,7 +14,13 @@ import (
 )
 
 var max_workers = 10
+var out_path = "./out/"
 var logger *log.Logger
+
+type FSResource struct {
+	resource itslearning.Resource
+	fsPath   string
+}
 
 func main() {
 	bars := uiprogress.New()
@@ -48,7 +54,7 @@ func main() {
 	for _, course := range courses {
 		logger.Info("Downloading course", "course", course.Title, "id", course.CourseId)
 
-		var resouceList []itslearning.Resource
+		var resouceList []FSResource
 		bars.Bars = []*uiprogress.Bar{bar_course}
 		bar := bars.AddBar(1)
 		bar.PrependFunc(func(b *uiprogress.Bar) string {
@@ -56,13 +62,17 @@ func main() {
 		})
 		res := itslearning.QueryCourseResources(itsl, course.CourseId)
 		for _, resource := range res {
+			var coursePath = sanitizePath(course.Title) + "/" + sanitizePath(resource.Title)
+
 			if resource.ElementType == "Folder" {
-				fetchResourcesRecursive(itsl, course, resource.ElementID, &resouceList)
+				fetchResourcesRecursive(itsl, course, resource.ElementID, coursePath, &resouceList)
 				logger.Info("Found folder", "element", resource.Title, "id", resource.ElementID)
 			}
 
 			if resource.ElementType == "LearningToolElement" {
-				resouceList = append(resouceList, resource)
+				var fsPath = out_path + coursePath
+				var fsResource = FSResource{resource: resource, fsPath: fsPath}
+				resouceList = append(resouceList, fsResource)
 				logger.Info("Found element", "element", resource.Title, "id", resource.ElementID)
 			}
 		}
@@ -79,9 +89,10 @@ func main() {
 		bar.PrependFunc(func(b *uiprogress.Bar) string {
 			return "Downloading files"
 		})
-		for _, resource := range resouceList {
-			var out_path = "./out" + sanitizePath(resource.Path) + "/" + resource.Title
-			if _, err := os.Stat(out_path); err == nil {
+		for _, fsResource := range resouceList {
+			var resource = fsResource.resource
+			var fsPath = fsResource.fsPath
+			if _, err := os.Stat(fsPath); err == nil {
 				logger.Info("Skipping element", "course", course.Title, "element", resource.Title, "id", resource.ElementID)
 				continue
 			}
@@ -90,7 +101,7 @@ func main() {
 			current_tasks++
 			go func(resource itslearning.Resource) {
 				defer wg.Done()
-				itslearning.DownloadElement(itsl, resource.ElementID, out_path)
+				itslearning.DownloadElement(itsl, resource.ElementID, fsPath)
 				bar.Incr()
 				current_tasks--
 			}(resource)
@@ -108,24 +119,33 @@ func main() {
 	}
 }
 
-func fetchResourcesRecursive(itsl itslearning.Itslearning, course itslearning.Course, folder_resource int, resList *[]itslearning.Resource) {
+func fetchResourcesRecursive(itsl itslearning.Itslearning, course itslearning.Course, folder_resource int, coursePath string, resList *[]FSResource) {
 	res := itslearning.QueryFolderResources(itsl, course.CourseId, folder_resource)
 	for _, resource := range res {
+		var newCoursePath = coursePath + "/" + sanitizePath(resource.Title)
+
 		if resource.ElementType == "Folder" {
-			fetchResourcesRecursive(itsl, course, resource.ElementID, resList)
+			fetchResourcesRecursive(itsl, course, resource.ElementID, newCoursePath, resList)
 			logger.Info("Found subfolder", "element", resource.Title, "id", resource.ElementID)
 		}
 
 		if resource.ElementType == "LearningToolElement" {
-			*resList = append(*resList, resource)
+			var fsPath = out_path + newCoursePath
+			var fsResource = FSResource{resource: resource, fsPath: fsPath}
+			*resList = append(*resList, fsResource)
 			logger.Info("Found element", "element", resource.Title, "id", resource.ElementID)
 		}
 	}
 }
 
 func sanitizePath(path string) string {
-	var regex = regexp.MustCompile(`\s*?/\s*`)
-	return regex.ReplaceAllString(path, "/")
+	// Remove leading slash of filepath
+	var regex = regexp.MustCompile(`^\s*?/\s*`)
+	var sanitizedWhitespace = regex.ReplaceAllString(path, "")
+
+	// Replace invalid filename characters with underscore
+	var invalidCharsRegex = regexp.MustCompile(`[<>:"/\|?*]`)
+	return invalidCharsRegex.ReplaceAllString(sanitizedWhitespace, "_")
 }
 
 func appendProgress(b *uiprogress.Bar) string {
