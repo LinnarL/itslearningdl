@@ -1,11 +1,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"minie4/itslearningdl/itslearning"
 	"os"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/gosuri/uiprogress"
@@ -22,7 +24,25 @@ type FSResource struct {
 	fsPath   string
 }
 
+func watchForChanges(orig []itslearning.Course, itsl itslearning.Itslearning) itslearning.Course {
+	for {
+		time.Sleep(2 * time.Second)
+		logger.Info("Checking for changes")
+		newCourses := itslearning.QueryCourseList(itsl)
+		for i, course := range orig {
+			if course.LastUpdatedUtc != newCourses[i].LastUpdatedUtc {
+				logger.Info("Found change", "course", course.Title, "id", course.CourseId)
+				return course
+			}
+		}
+		logger.Debug("No changes")
+	}
+}
+
 func main() {
+	var doWatch = flag.Bool("w", false, "Watch for changes")
+	flag.Parse()
+
 	bars := uiprogress.New()
 	bars.Start()
 
@@ -46,6 +66,10 @@ func main() {
 
 	itsl := itslearning.New(username, password, instance, user_agent)
 	courses := itslearning.QueryCourseList(itsl)
+	if *doWatch {
+		logger.Info("Entering watch mode. Checking for changes every :2 seconds...")
+		courses = []itslearning.Course{watchForChanges(courses, itsl)}
+	}
 
 	bar_course := bars.AddBar(len(courses)).AppendFunc(appendProgress)
 	bar_course.PrependFunc(func(b *uiprogress.Bar) string {
