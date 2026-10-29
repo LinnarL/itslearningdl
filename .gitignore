@@ -1,3 +1,6 @@
 .env
 out/
 itslearningdl
+.itslearning-token.json
+dist/
+.DS_Store

@@ -6,6 +6,7 @@ import (
 	"minie4/itslearningdl/itslearning"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,7 +41,11 @@ func watchForChanges(orig []itslearning.Course, itsl itslearning.Itslearning) it
 }
 
 func main() {
+	if handleURLMode() {
+		return
+	}
 	var doWatch = flag.Bool("w", false, "Watch for changes")
+	var doSSO = flag.Bool("sso", false, "Log in through the browser (SSO) instead of username/password")
 	flag.Parse()
 
 	bars := uiprogress.New()
@@ -58,13 +63,20 @@ func main() {
 	user_agent := "com.itslearning.itslearningintapp 3.7.1 (HONOR BLN-L21 / Android 9)"
 	username := os.Getenv("ITSLEARNING_USERNAME")
 	password := os.Getenv("ITSLEARNING_PASSWORD")
-	instance := os.Getenv("ITSLEARNING_INSTANCE")
+	instance := strings.TrimRight(os.Getenv("ITSLEARNING_INSTANCE"), "/")
 
-	if username == "" || password == "" || instance == "" {
-		logger.Fatal("Environment variables missing!")
+	var itsl itslearning.Itslearning
+	if *doSSO || (username == "" && password == "") {
+		if instance == "" {
+			logger.Fatal("ITSLEARNING_INSTANCE is missing!")
+		}
+		itsl = ssoLogin(instance, user_agent)
+	} else {
+		if username == "" || password == "" || instance == "" {
+			logger.Fatal("Environment variables missing!")
+		}
+		itsl = itslearning.New(username, password, instance, user_agent)
 	}
-
-	itsl := itslearning.New(username, password, instance, user_agent)
 	courses := itslearning.QueryCourseList(itsl)
 	if *doWatch {
 		logger.Info("Entering watch mode. Checking for changes every :2 seconds...")
@@ -141,6 +153,9 @@ func main() {
 
 		bar_course.Incr()
 	}
+	bars.Stop()
+	logger.Info("Done")
+	os.Exit(0)
 }
 
 func fetchResourcesRecursive(itsl itslearning.Itslearning, course itslearning.Course, folder_resource int, coursePath string, resList *[]FSResource) {

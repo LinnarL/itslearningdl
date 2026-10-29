@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anaskhan96/soup"
@@ -18,9 +19,52 @@ import (
 )
 
 type Itslearning struct {
-	instance     string
-	user_agent   string
-	access_token string
+	instance   string
+	user_agent string
+	auth       *authState
+}
+
+// authState is shared between all copies of an Itslearning value so that
+// a refreshed token is picked up by every running download
+type authState struct {
+	mu           sync.Mutex
+	accessToken  string
+	refreshToken string
+	expiry       time.Time
+	onRefresh    func(Token)
+}
+
+// token returns a valid access token, refreshing it shortly before it expires
+func (itsl Itslearning) token() string {
+	a := itsl.auth
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.refreshToken != "" && time.Now().After(a.expiry) {
+		log.Debug("Refreshing access token")
+		token, err := RefreshToken(itsl.instance, itsl.user_agent, a.refreshToken)
+		if err != nil {
+			log.Error("Token refresh failed", "error", err)
+		} else {
+			a.set(token)
+			if a.onRefresh != nil {
+				a.onRefresh(token)
+			}
+		}
+	}
+	return a.accessToken
+}
+
+func (a *authState) set(token Token) {
+	a.accessToken = token.AccessToken
+	if token.RefreshToken != "" {
+		a.refreshToken = token.RefreshToken
+	}
+	lifetime := time.Duration(token.ExpiresIn) * time.Second
+	if lifetime <= 0 {
+		lifetime = 10 * time.Minute
+	}
+	// Refresh a bit early so requests never use an expired token
+	a.expiry = time.Now().Add(lifetime * 3 / 4)
 }
 
 type Course struct {
@@ -73,25 +117,80 @@ func doHTTPReq(req http.Request, err error, itsl Itslearning, method string, tar
 	return json.NewDecoder(res.Body).Decode(target)
 }
 
-func RequestAuthtoken(itsl Itslearning, username string, password string) string {
+const ClientID = "10ae9d30-1853-48ff-81cb-47b58a325685"
+
+type Token struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+}
+
+func requestToken(itsl Itslearning, method string, payload url.Values) (Token, error) {
 	path := itsl.instance + "/restapi/oauth2/token"
-	payload := url.Values{
-		"client_id":  {"10ae9d30-1853-48ff-81cb-47b58a325685"},
+	payload.Set("client_id", ClientID)
+
+	var token Token
+	req, err := http.NewRequest(http.MethodPost, path, strings.NewReader(payload.Encode()))
+	if err != nil {
+		return token, err
+	}
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", itsl.user_agent)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return token, err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if err := json.Unmarshal(body, &token); err != nil || token.AccessToken == "" {
+		return token, fmt.Errorf("%s failed (HTTP %d): %s", method, res.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return token, nil
+}
+
+func RequestAuthtoken(itsl Itslearning, username string, password string) Token {
+	token, err := requestToken(itsl, "Login", url.Values{
 		"grant_type": {"password"},
 		"username":   {username},
 		"password":   {password},
+	})
+	if err != nil {
+		log.Fatal("Login failed", "error", err)
 	}
+	return token
+}
 
-	req, err := http.NewRequest(http.MethodPost, path, strings.NewReader(payload.Encode()))
-	data := new(map[string]interface{})
-	err = doHTTPReq(*req, err, itsl, "Login", data)
-	return (*data)["access_token"].(string)
+// AuthorizeURL returns the browser login page (including SSO options) used by the mobile app
+func AuthorizeURL(instance string, state string) string {
+	payload := url.Values{
+		"client_id":     {ClientID},
+		"redirect_uri":  {"itsl-itslearning://login"},
+		"response_type": {"code"},
+		"scope":         {"SCOPE"},
+		"state":         {state},
+	}
+	return instance + "/oauth2/authorize.aspx?" + payload.Encode()
+}
+
+func ExchangeCode(instance string, useragent string, code string) (Token, error) {
+	return requestToken(Itslearning{instance, useragent, &authState{}}, "Code exchange", url.Values{
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {"itsl-itslearning://login"},
+	})
+}
+
+func RefreshToken(instance string, useragent string, refreshToken string) (Token, error) {
+	return requestToken(Itslearning{instance, useragent, &authState{}}, "Token refresh", url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+	})
 }
 
 func QueryCourseList(itsl Itslearning) []Course {
 	path := itsl.instance + "/restapi/personal/courses/v2"
 	payload := url.Values{
-		"access_token": {itsl.access_token},
+		"access_token": {itsl.token()},
 		"pageIndex":    {"0"},
 		"pageSize":     {"9999"},
 		"filter":       {"1"},
@@ -106,7 +205,7 @@ func QueryCourseList(itsl Itslearning) []Course {
 func QueryCourseResources(itsl Itslearning, courseID int) []Resource {
 	path := fmt.Sprintf("%s/restapi/personal/courses/%s/resources/v1", itsl.instance, strconv.Itoa(courseID))
 	payload := url.Values{
-		"access_token": {itsl.access_token},
+		"access_token": {itsl.token()},
 		"pageIndex":    {"0"},
 		"pageSize":     {"9999"},
 	}
@@ -124,7 +223,7 @@ func QueryCourseResources(itsl Itslearning, courseID int) []Resource {
 func QueryFolderResources(itsl Itslearning, courseID int, folderElementID int) []Resource {
 	path := fmt.Sprintf("%s/restapi/personal/courses/%s/folders/%s/resources/v1", itsl.instance, strconv.Itoa(courseID), strconv.Itoa(folderElementID))
 	payload := url.Values{
-		"access_token": {itsl.access_token},
+		"access_token": {itsl.token()},
 		"pageIndex":    {"0"},
 		"pageSize":     {"9999"},
 	}
@@ -143,7 +242,7 @@ func DownloadElement(itsl Itslearning, elementID int, outfile string) {
 	// Request the SSO redirect URL
 	path := fmt.Sprintf("%s/restapi/personal/sso/url/v1", itsl.instance)
 	payload := url.Values{
-		"access_token": {itsl.access_token},
+		"access_token": {itsl.token()},
 		"url":          {fmt.Sprintf("%s/LearningToolElement/ViewLearningToolElement.aspx?LearningToolElementId=%d", itsl.instance, elementID)},
 	}
 
@@ -224,7 +323,14 @@ func DownloadElement(itsl Itslearning, elementID int, outfile string) {
 
 func New(username string, password string, instance string, useragent string) Itslearning {
 	log.Debug("Attempting to log in")
-	e := Itslearning{instance, useragent, ""}
-	e.access_token = RequestAuthtoken(e, username, password)
+	e := Itslearning{instance, useragent, &authState{}}
+	e.auth.set(RequestAuthtoken(e, username, password))
+	return e
+}
+
+// NewWithToken creates a client that keeps itself logged in; onRefresh is called with each new token
+func NewWithToken(instance string, useragent string, token Token, onRefresh func(Token)) Itslearning {
+	e := Itslearning{instance, useragent, &authState{onRefresh: onRefresh}}
+	e.auth.set(token)
 	return e
 }
