@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -310,15 +311,58 @@ func DownloadElement(itsl Itslearning, elementID int, outfile string) {
 		return
 	}
 
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		log.Warn("File download failed!", "status", res.Status, "file", outfile)
+		return
+	}
+
+	// Titles on itslearning usually have no file extension, so work it out from the response
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(res.Body, head)
+	head = head[:n]
+	outfile = withExtension(outfile, res, head)
+
 	dir, _ := filepath.Split(outfile)
 	os.MkdirAll(dir, os.ModePerm)
 	out, err := os.Create(outfile)
 	if err != nil {
 		log.Error("Failed writing file!", "error", err)
+		return
 	}
 	defer out.Close()
-	defer res.Body.Close()
+	out.Write(head)
 	io.Copy(out, res.Body)
+}
+
+// withExtension appends a file extension to outfile based on the server's filename,
+// Content-Type or the file contents, unless the name already ends with it
+func withExtension(outfile string, res *http.Response, head []byte) string {
+	ext := ""
+	if _, params, err := mime.ParseMediaType(res.Header.Get("Content-Disposition")); err == nil {
+		ext = filepath.Ext(params["filename"])
+	}
+	if ext == "" {
+		ctype := res.Header.Get("Content-Type")
+		if ctype == "" || strings.HasPrefix(ctype, "application/octet-stream") {
+			ctype = http.DetectContentType(head)
+		}
+		if mediaType, _, err := mime.ParseMediaType(ctype); err == nil {
+			// Prefer the common extension where the system lists several (e.g. .jpe, .jpeg, .jpg)
+			if exts, _ := mime.ExtensionsByType(mediaType); len(exts) > 0 {
+				ext = exts[0]
+				for _, e := range exts {
+					if e == ".pdf" || e == ".jpg" || e == ".txt" || e == ".html" {
+						ext = e
+					}
+				}
+			}
+		}
+	}
+	if ext == "" || strings.HasSuffix(strings.ToLower(outfile), strings.ToLower(ext)) {
+		return outfile
+	}
+	return outfile + ext
 }
 
 func New(username string, password string, instance string, useragent string) Itslearning {

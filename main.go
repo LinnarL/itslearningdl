@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"minie4/itslearningdl/itslearning"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -128,7 +129,7 @@ func main() {
 		for _, fsResource := range resouceList {
 			var resource = fsResource.resource
 			var fsPath = fsResource.fsPath
-			if _, err := os.Stat(fsPath); err == nil {
+			if alreadyDownloaded(fsPath) {
 				logger.Info("Skipping element", "course", course.Title, "element", resource.Title, "id", resource.ElementID)
 				continue
 			}
@@ -189,4 +190,22 @@ func sanitizePath(path string) string {
 
 func appendProgress(b *uiprogress.Bar) string {
 	return fmt.Sprintf("%d/%d (%.2f%%)", b.Current(), b.Total, (float32(b.Current())/float32(b.Total))*100.0)
+}
+
+// alreadyDownloaded also matches files saved with an extension added to the title
+func alreadyDownloaded(fsPath string) bool {
+	if _, err := os.Stat(fsPath); err == nil {
+		return true
+	}
+	entries, err := os.ReadDir(filepath.Dir(fsPath))
+	if err != nil {
+		return false
+	}
+	base := filepath.Base(fsPath)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), base+".") {
+			return true
+		}
+	}
+	return false
 }
